@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  helden-backend:
+    build: .
+    container_name: helden-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    networks:
+      - helden-net
+    restart: unless-stopped
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - helden-net
+    volumes:
+      - ollama-data:/root/.ollama
+
+networks:
+  helden-net:
+    driver: bridge
+
+volumes:
+  ollama-data:
