@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import init_db
@@ -7,7 +8,12 @@ from app.routers import automations_router, agents_router, activity_router, sett
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: initialize database
+    # Startup: create data directory if it doesn't exist
+    db_path = os.environ.get("DATABASE_PATH", "/app/data/helden.db")
+    data_dir = os.path.dirname(db_path)
+    os.makedirs(data_dir, exist_ok=True)
+    
+    # Initialize database
     await init_db()
     yield
     # Shutdown (if needed)
