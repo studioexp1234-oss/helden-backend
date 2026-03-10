@@ -3,9 +3,9 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.pool import StaticPool
 from app.models.models import Base
 
-# Use /app/data for persistent storage on Render
-db_path = os.environ.get("DATABASE_PATH", "/app/data/helden.db")
-DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+# Use in-memory SQLite for Render free tier (data won't persist across restarts)
+# For production, use PostgreSQL or a mounted disk
+DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 engine = create_async_engine(
     DATABASE_URL,
