@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from app.database import get_db, init_db
 from app.models import Automation, ActivityLog, Settings
-from app.services.n8n_client import trigger_webhook
+from app.services.n8n_client import trigger_webhook, create_workflow, get_workflow, get_workflow_executions
 
 
 router = APIRouter(prefix="/api/automations", tags=["automations"])
@@ -26,6 +26,7 @@ class AutomationCreate(BaseModel):
     trigger_desc: Optional[str] = None
     description: Optional[str] = None
     n8n_workflow_id: Optional[str] = None
+    create_n8n_workflow: bool = True  # Auto-create N8N workflow
 
 
 class AutomationUpdate(BaseModel):
@@ -67,6 +68,7 @@ async def get_automations(db: AsyncSession = Depends(get_db)):
                 "trigger_desc": a.trigger_desc,
                 "description": a.description,
                 "n8n_workflow_id": a.n8n_workflow_id,
+                "n8n_workflow_url": f"https://helden-n8n.onrender.com/workflow/{a.n8n_workflow_id}" if a.n8n_workflow_id else None,
                 "created_at": a.created_at.isoformat() if a.created_at else None,
                 "updated_at": a.updated_at.isoformat() if a.updated_at else None
             }
@@ -82,6 +84,17 @@ async def get_automation(slug: str, db: AsyncSession = Depends(get_db)):
     automation = result.scalar_one_or_none()
     if not automation:
         raise HTTPException(status_code=404, detail="Automation not found")
+    
+    n8n_workflow_url = None
+    n8n_executions = []
+    
+    if automation.n8n_workflow_id:
+        n8n_workflow_url = f"https://helden-n8n.onrender.com/workflow/{automation.n8n_workflow_id}"
+        # Try to get execution history
+        exec_result = await get_workflow_executions(automation.n8n_workflow_id, 5)
+        if exec_result.get("status") == "success":
+            n8n_executions = exec_result.get("executions", [])
+    
     return {
         "id": automation.id,
         "slug": automation.slug,
@@ -95,13 +108,33 @@ async def get_automation(slug: str, db: AsyncSession = Depends(get_db)):
         "output": automation.output,
         "trigger_desc": automation.trigger_desc,
         "description": automation.description,
-        "n8n_workflow_id": automation.n8n_workflow_id
+        "n8n_workflow_id": automation.n8n_workflow_id,
+        "n8n_workflow_url": n8n_workflow_url,
+        "n8n_executions": n8n_executions
     }
 
 
 @router.post("")
 async def create_automation(data: AutomationCreate, db: AsyncSession = Depends(get_db)):
-    automation = Automation(**data.model_dump())
+    n8n_workflow_id = data.n8n_workflow_id
+    
+    # Auto-create N8N workflow if requested
+    if data.create_n8n_workflow and not n8n_workflow_id:
+        n8n_result = await create_workflow(data.name)
+        if n8n_result.get("status") == "success":
+            n8n_workflow_id = n8n_result.get("workflow_id")
+    
+    automation = Automation(
+        slug=data.slug,
+        name=data.name,
+        category=data.category,
+        channel=data.channel,
+        status=data.status,
+        output=data.output,
+        trigger_desc=data.trigger_desc,
+        description=data.description,
+        n8n_workflow_id=n8n_workflow_id
+    )
     db.add(automation)
     await db.commit()
     await db.refresh(automation)
@@ -116,7 +149,12 @@ async def create_automation(data: AutomationCreate, db: AsyncSession = Depends(g
     db.add(log)
     await db.commit()
     
-    return {"id": automation.id, "slug": automation.slug}
+    return {
+        "id": automation.id,
+        "slug": automation.slug,
+        "n8n_workflow_id": n8n_workflow_id,
+        "n8n_workflow_url": f"https://helden-n8n.onrender.com/workflow/{n8n_workflow_id}" if n8n_workflow_id else None
+    }
 
 
 @router.put("/{slug}")
@@ -232,3 +270,19 @@ async def trigger_automation(
         await db.commit()
         
         raise HTTPException(status_code=400, detail=n8n_result.get("message"))
+
+
+@router.get("/{slug}/n8n-executions")
+async def get_automation_n8n_executions(slug: str, db: AsyncSession = Depends(get_db)):
+    """Get N8N execution history for an automation."""
+    result = await db.execute(select(Automation).where(Automation.slug == slug))
+    automation = result.scalar_one_or_none()
+    
+    if not automation:
+        raise HTTPException(status_code=404, detail="Automation not found")
+    
+    if not automation.n8n_workflow_id:
+        return {"status": "no_workflow", "executions": []}
+    
+    exec_result = await get_workflow_executions(automation.n8n_workflow_id, 10)
+    return exec_result
